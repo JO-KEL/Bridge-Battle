@@ -1,0 +1,229 @@
+--[[
+    BRIDGE BATTLES — ALL-IN-ONE BOT
+    Fitur: Auto Pathfinding, Auto Take, Auto Place, Auto Shoot (Basic)
+    Dibuat oleh: CYBR-MAHI untuk AN0N
+    Catatan: Ubah Config di bawah jika ada nama item/remote yang berbeda.
+]]
+
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local PathfindingService = game:GetService("PathfindingService")
+local Workspace = game:GetService("Workspace")
+
+local LocalPlayer = Players.LocalPlayer
+local Camera = Workspace.CurrentCamera
+
+-- ================= KONFIGURASI =================
+local Config = {
+    AutoPlace = false,
+    AutoTake = false,
+    AutoPath = false,
+    AutoShoot = false,
+    
+    PlaceDelay = 0.15,       -- Jeda antar place
+    TakeRadius = 50,         -- Jarak deteksi item buat diambil
+    TargetItemName = "Stud", -- Nama item yang mau di-auto-take (bisa "Coin", "Cash", dll)
+    WalkSpeed = 35,          -- Kecepatan lari saat auto path
+}
+
+-- ================= VARIABEL STATE =================
+local placingLoop = false
+local takingLoop = false
+local pathLoop = false
+local shootLoop = false
+local vim = game:GetService("VirtualInputManager")
+
+-- ================= HELPER: KLIK KIRI =================
+local function leftClick()
+    -- Metode 1: Executor bawaan
+    if type(mouse1click) == "function" then
+        mouse1click()
+        return
+    end
+    -- Metode 2: Virtual Input Manager
+    if vim then
+        local mouse = LocalPlayer:GetMouse()
+        vim:SendMouseButtonEvent(mouse.X, mouse.Y, 0, true, game, 0)
+        task.wait(0.01)
+        vim:SendMouseButtonEvent(mouse.X, mouse.Y, 0, false, game, 0)
+        return
+    end
+    -- Metode 3: Fallback Tool
+    local char = LocalPlayer.Character
+    local tool = char and char:FindFirstChildOfClass("Tool")
+    if tool then tool:Activate() end
+end
+
+-- ================= HELPER: DAPATKAN POSISI ITEM =================
+local function getNearestItem()
+    local char = LocalPlayer.Character
+    if not char or not char:FindFirstChild("HumanoidRootPart") then return nil end
+    
+    local hrp = char.HumanoidRootPart
+    local nearest = nil
+    local shortestDist = Config.TakeRadius
+    
+    for _, obj in ipairs(Workspace:GetDescendants()) do
+        if obj:IsA("BasePart") and string.find(obj.Name, Config.TargetItemName, 1, true) then
+            local dist = (obj.Position - hrp.Position).Magnitude
+            if dist < shortestDist then
+                shortestDist = dist
+                nearest = obj
+            end
+        end
+    end
+    return nearest
+end
+
+-- ================= FITUR 1: AUTO PLACE =================
+task.spawn(function()
+    while true do
+        task.wait(Config.PlaceDelay + math.random() * 0.05)
+        if Config.AutoPlace then
+            leftClick()
+        end
+    end
+end)
+
+-- ================= FITUR 2: AUTO TAKE =================
+task.spawn(function()
+    while true do
+        task.wait(0.1)
+        if Config.AutoTake then
+            local item = getNearestItem()
+            if item then
+                local char = LocalPlayer.Character
+                if char and char:FindFirstChild("HumanoidRootPart") then
+                    -- Teleport ke item (CFrame, bukan walk)
+                    char.HumanoidRootPart.CFrame = item.CFrame
+                    task.wait(0.2)
+                end
+            end
+        end
+    end
+end)
+
+-- ================= FITUR 3: AUTO PATHFINDING =================
+local function walkTo(targetPos)
+    local char = LocalPlayer.Character
+    if not char then return end
+    local humanoid = char:FindFirstChildOfClass("Humanoid")
+    if not humanoid then return end
+    
+    local path = PathfindingService:CreatePath({
+        AgentRadius = 2,
+        AgentHeight = 5,
+        AgentCanJump = true
+    })
+    
+    local success, errorMessage = pcall(function()
+        path:ComputeAsync(char.HumanoidRootPart.Position, targetPos)
+    end)
+    
+    if success and path.Status == Enum.PathStatus.Success then
+        for _, waypoint in ipairs(path:GetWaypoints()) do
+            if not Config.AutoPath then break end -- Stop kalau di-toggle off
+            if waypoint.Action == Enum.PathWaypointAction.Jump then
+                humanoid.Jump = true
+            end
+            humanoid:MoveTo(waypoint.Position)
+            humanoid.MoveToFinished:Wait(1) -- Timeout 1 detik
+        end
+    end
+end
+
+task.spawn(function()
+    while true do
+        task.wait(1)
+        if Config.AutoPath then
+            local char = LocalPlayer.Character
+            if char and char:FindFirstChild("HumanoidRootPart") then
+                -- Logika Pathfinding: Jalan ke titik terjauh di Z axis (ujung jembatan)
+                -- Bisa dimodifikasi sesuai map
+                local currentPos = char.HumanoidRootPart.Position
+                local targetPos = Vector3.new(currentPos.X, currentPos.Y, currentPos.Z + 50) -- Contoh: maju 50 stud
+                walkTo(targetPos)
+            end
+        end
+    end
+end)
+
+-- ================= FITUR 4: AUTO SHOOT =================
+task.spawn(function()
+    while true do
+        task.wait(0.2)
+        if Config.AutoShoot then
+            -- Simulasi klik kiri untuk nembak
+            leftClick()
+        end
+    end
+end)
+
+-- ================= GUI SEDERHANA =================
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "BridgeBotGUI"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.Parent = game:GetService("CoreGui")
+
+local MainFrame = Instance.new("Frame")
+MainFrame.Size = UDim2.new(0, 200, 0, 300)
+MainFrame.Position = UDim2.new(0, 20, 0.5, -150)
+MainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+MainFrame.BorderSizePixel = 0
+MainFrame.Active = true
+MainFrame.Draggable = true
+MainFrame.Parent = ScreenGui
+
+local UICorner = Instance.new("UICorner")
+UICorner.CornerRadius = UDim.new(0, 8)
+UICorner.Parent = MainFrame
+
+local Title = Instance.new("TextLabel")
+Title.Size = UDim2.new(1, 0, 0, 40)
+Title.BackgroundTransparency = 1
+Title.Text = "Bridge Battles Bot"
+Title.TextColor3 = Color3.fromRGB(255, 255, 255)
+Title.Font = Enum.Font.GothamBold
+Title.TextSize = 16
+Title.Parent = MainFrame
+
+local function createToggle(name, configKey, yPos)
+    local Btn = Instance.new("TextButton")
+    Btn.Size = UDim2.new(0.9, 0, 0, 35)
+    Btn.Position = UDim2.new(0.05, 0, 0, yPos)
+    Btn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+    Btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    Btn.Font = Enum.Font.Gotham
+    Btn.TextSize = 14
+    Btn.Text = name .. " : OFF"
+    Btn.Parent = MainFrame
+    
+    local BtnCorner = Instance.new("UICorner")
+    BtnCorner.CornerRadius = UDim.new(0, 5)
+    BtnCorner.Parent = Btn
+
+    Btn.MouseButton1Click:Connect(function()
+        Config[configKey] = not Config[configKey]
+        Btn.Text = name .. " : " .. (Config[configKey] and "ON" or "OFF")
+        Btn.BackgroundColor3 = Config[configKey] and Color3.fromRGB(0, 170, 0) or Color3.fromRGB(50, 50, 50)
+    end)
+end
+
+createToggle("Auto Place", "AutoPlace", 50)
+createToggle("Auto Take", "AutoTake", 95)
+createToggle("Auto Path", "AutoPath", 140)
+createToggle("Auto Shoot", "AutoShoot", 185)
+
+local Status = Instance.new("TextLabel")
+Status.Size = UDim2.new(1, 0, 0, 30)
+Status.Position = UDim2.new(0, 0, 1, -30)
+Status.BackgroundTransparency = 1
+Status.Text = "Status: Ready"
+Status.TextColor3 = Color3.fromRGB(150, 150, 150)
+Status.Font = Enum.Font.Gotham
+Status.TextSize = 12
+Status.Parent = MainFrame
+
+print("[BridgeBot] Loaded successfully!")
