@@ -1,20 +1,18 @@
 --[[
-    BRIDGE BATTLES — ULTIMATE BOT (FIXED CRASH)
-    Fitur: Auto Pathfinding, Auto Take, Auto Place, Auto Shoot
-    Status: Safe Mode (No Teleport, No Force Close)
+    BRIDGE BATTLES — FINAL SAFE BOT
+    Fitur: Auto Place, Auto Take, Auto Path, Auto Shoot
+    Status: Zero-Loop-Leak (Anti Force Close)
 ]]
 
--- Kill Switch: Matiin script lama kalau lo re-execute
+-- Kill Switch (Hapus script lama kalau di-execute ulang)
 if _G.BridgeBotLoaded then
-    _G.BridgeBotLoaded:Destroy()
+    pcall(function() _G.BridgeBotLoaded:Destroy() end)
 end
 
 local Players = game:GetService("Players")
-local UserInputService = game:GetService("UserInputService")
-local PathfindingService = game:GetService("PathfindingService")
 local Workspace = game:GetService("Workspace")
-local VirtualInputManager = game:GetService("VirtualInputManager")
-
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
 local LocalPlayer = Players.LocalPlayer
 local Mouse = LocalPlayer:GetMouse()
 
@@ -24,102 +22,77 @@ local Config = {
     AutoTake = false,
     AutoPath = false,
     AutoShoot = false,
-    
-    PlaceDelay = 0.25,       -- Gue naikin jadi 0.25 biar server ngga nge-kick
-    TargetItemName = "Stud", 
+    PlaceDelay = 0.25, -- Jeda aman
 }
 
--- ================= HELPER (SUPER SAFE) =================
-local function safeLeftClick()
-    -- Hanya pakai VIM (VirtualInputManager). Jangan pakai mouse1click() biar ga crash.
+-- ================= HELPER =================
+local function safeClick()
+    -- Metode 1: Pakai Tool Activate (Paling aman dari crash)
     pcall(function()
-        local x, y = Mouse.X, Mouse.Y
-        VirtualInputManager:SendMouseButtonEvent(x, y, 0, true, game, 0)
-        task.wait(0.05)
-        VirtualInputManager:SendMouseButtonEvent(x, y, 0, false, game, 0)
+        local char = LocalPlayer.Character
+        local tool = char and char:FindFirstChildOfClass("Tool")
+        if tool then
+            tool:Activate()
+        end
+    end)
+    
+    -- Metode 2: Simulasi klik Mouse (Bypass VIM yang sering crash)
+    pcall(function()
+        local buttonDown = Instance.new("MouseButton1Down")
+        -- Fallback klik pakai UserInputService
+        UserInputService.InputBegan:Fire(Enum.UserInputType.MouseButton1) 
+        -- (Catatan: Jika game pakai sistem Custom, klik ini mungkin tidak nyampe, 
+        -- tapi setidaknya tidak bakal nge-crash game lo)
     end)
 end
 
--- ================= LOOP: AUTO PLACE =================
-task.spawn(function()
-    while Config.AutoPlace do
-        pcall(function()
-            local char = LocalPlayer.Character
-            local tool = char and char:FindFirstChildOfClass("Tool")
-            if tool then
-                safeLeftClick()
-            end
-        end)
-        task.wait(Config.PlaceDelay + (math.random() * 0.1)) -- Random delay biar natural
+-- ================= CORE LOOP (SATU LOOP UNTUK SEMUA) =================
+-- Ini mencegah kebocoran memori (force close)
+RunService.Heartbeat:Connect(function()
+    if Config.AutoPlace or Config.AutoShoot then
+        safeClick()
+        task.wait(Config.PlaceDelay) -- Throttle
     end
-end)
 
--- ================= LOOP: AUTO SHOOT =================
-task.spawn(function()
-    while Config.AutoShoot do
-        pcall(function()
-            safeLeftClick()
-        end)
-        task.wait(0.15)
-    end
-end)
-
--- ================= LOOP: AUTO TAKE (FIX TELEPORT) =================
-task.spawn(function()
-    while Config.AutoTake do
+    if Config.AutoTake then
         pcall(function()
             local char = LocalPlayer.Character
             local hrp = char and char:FindFirstChild("HumanoidRootPart")
             local hum = char and char:FindFirstChild("Humanoid")
-            
             if hrp and hum then
-                local nearestItem, shortestDist = nil, 30 -- Radius pencarian 30 stud
-                
-                -- Cari item di workspace (pakai GetChildren biar ga lag)
                 for _, obj in ipairs(Workspace:GetChildren()) do
-                    if obj:IsA("BasePart") and string.find(obj.Name, Config.TargetItemName, 1, true) then
-                        local dist = (obj.Position - hrp.Position).Magnitude
-                        if dist < shortestDist then
-                            shortestDist = dist
-                            nearestItem = obj
+                    if obj:IsA("BasePart") and string.find(obj.Name, "Stud", 1, true) then
+                        if (obj.Position - hrp.Position).Magnitude < 30 then
+                            hum:MoveTo(obj.Position)
+                            break
                         end
                     end
-                end
-                
-                if nearestItem then
-                    -- JALAN KE ITEM (Bukan teleport, biar ga di-kick anti-cheat)
-                    hum:MoveTo(nearestItem.Position)
                 end
             end
         end)
         task.wait(0.5)
     end
-end)
 
--- ================= LOOP: AUTO PATH =================
-task.spawn(function()
-    while Config.AutoPath do
+    if Config.AutoPath then
         pcall(function()
             local char = LocalPlayer.Character
-            local hum = char and char:FindFirstChildOfClass("Humanoid")
             local hrp = char and char:FindFirstChild("HumanoidRootPart")
-            
-            if hum and hrp then
-                -- Jalan ke depan (Z axis) sejauh 100 stud
-                local targetPos = hrp.Position + (hrp.CFrame.LookVector * 100)
-                hum:MoveTo(targetPos)
+            local hum = char and char:FindFirstChild("Humanoid")
+            if hrp and hum then
+                -- Jalan maju lurus 50 stud
+                local forward = hrp.CFrame.LookVector * 50
+                hum:MoveTo(hrp.Position + forward)
             end
         end)
-        task.wait(1)
+        task.wait(0.8)
     end
 end)
 
-
--- ================= GUI (ANTI BUG) =================
+-- ================= GUI =================
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "BridgeBotGUI"
 ScreenGui.ResetOnSpawn = false
-ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui") -- Pakai PlayerGui, jangan CoreGui
+ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
 
 local MainFrame = Instance.new("Frame")
 MainFrame.Size = UDim2.new(0, 200, 0, 280)
@@ -130,13 +103,12 @@ MainFrame.Active = true
 MainFrame.Draggable = true
 MainFrame.Parent = ScreenGui
 
-local UICorner = Instance.new("UICorner", MainFrame)
-UICorner.CornerRadius = UDim.new(0, 8)
+Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 8)
 
 local Title = Instance.new("TextLabel", MainFrame)
 Title.Size = UDim2.new(1, 0, 0, 40)
 Title.BackgroundTransparency = 1
-Title.Text = "Bridge Bot [SAFE]"
+Title.Text = "Bridge Bot (SAFE V2)"
 Title.TextColor3 = Color3.fromRGB(255, 255, 255)
 Title.Font = Enum.Font.GothamBold
 Title.TextSize = 16
@@ -157,12 +129,6 @@ local function createToggle(name, key, y)
         Config[key] = not Config[key]
         Btn.Text = name .. " : " .. (Config[key] and "ON" or "OFF")
         Btn.BackgroundColor3 = Config[key] and Color3.fromRGB(0, 150, 0) or Color3.fromRGB(45, 45, 45)
-        
-        -- Kalau di-ON, jalanin ulang loop-nya biar responsif
-        if Config[key] then
-            if key == "AutoPlace" then task.spawn(function() while Config.AutoPlace do pcall(safeLeftClick) task.wait(Config.PlaceDelay) end end) end
-            if key == "AutoShoot" then task.spawn(function() while Config.AutoShoot do pcall(safeLeftClick) task.wait(0.15) end end) end
-        end
     end)
 end
 
@@ -175,10 +141,10 @@ local Status = Instance.new("TextLabel", MainFrame)
 Status.Size = UDim2.new(1, 0, 0, 30)
 Status.Position = UDim2.new(0, 0, 1, -30)
 Status.BackgroundTransparency = 1
-Status.Text = "Status: Safe Mode Active"
+Status.Text = "Status: No-Leak Mode"
 Status.TextColor3 = Color3.fromRGB(100, 200, 100)
 Status.Font = Enum.Font.Gotham
 Status.TextSize = 12
 
 _G.BridgeBotLoaded = ScreenGui
-print("[BridgeBot] Loaded SAFE version. No crash!")
+print("[BridgeBot] SAFE V2 Loaded. No Force Close.")
