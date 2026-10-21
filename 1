@@ -1,90 +1,107 @@
 --[[
-    BRIDGE BATTLES — FINAL SAFE BOT
-    Fitur: Auto Place, Auto Take, Auto Path, Auto Shoot
-    Status: Zero-Loop-Leak (Anti Force Close)
+    BRIDGE BATTLES — SMART BOT (TEAM DETECTION)
+    Fitur: Auto Take (Sesuai Tim), Auto Path, Auto Place, Auto Shoot
+    Status: No-Crash, Mobile/Emulator Friendly
 ]]
 
--- Kill Switch (Hapus script lama kalau di-execute ulang)
 if _G.BridgeBotLoaded then
     pcall(function() _G.BridgeBotLoaded:Destroy() end)
 end
 
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
-local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 local LocalPlayer = Players.LocalPlayer
 local Mouse = LocalPlayer:GetMouse()
 
--- ================= KONFIGURASI =================
 local Config = {
-    AutoPlace = false,
-    AutoTake = false,
-    AutoPath = false,
+    AutoPlay = false,   -- Ini ngegabungin Take, Path, dan Place
     AutoShoot = false,
-    PlaceDelay = 0.25, -- Jeda aman
+    WalkSpeed = 20,     -- Kecepatan jalan (aman dari anti-cheat)
 }
 
--- ================= HELPER =================
-local function safeClick()
-    -- Metode 1: Pakai Tool Activate (Paling aman dari crash)
-    pcall(function()
-        local char = LocalPlayer.Character
-        local tool = char and char:FindFirstChildOfClass("Tool")
-        if tool then
-            tool:Activate()
-        end
-    end)
-    
-    -- Metode 2: Simulasi klik Mouse (Bypass VIM yang sering crash)
-    pcall(function()
-        local buttonDown = Instance.new("MouseButton1Down")
-        -- Fallback klik pakai UserInputService
-        UserInputService.InputBegan:Fire(Enum.UserInputType.MouseButton1) 
-        -- (Catatan: Jika game pakai sistem Custom, klik ini mungkin tidak nyampe, 
-        -- tapi setidaknya tidak bakal nge-crash game lo)
-    end)
+local function getTool()
+    local char = LocalPlayer.Character
+    return char and char:FindFirstChildOfClass("Tool")
 end
 
--- ================= CORE LOOP (SATU LOOP UNTUK SEMUA) =================
--- Ini mencegah kebocoran memori (force close)
-RunService.Heartbeat:Connect(function()
-    if Config.AutoPlace or Config.AutoShoot then
-        safeClick()
-        task.wait(Config.PlaceDelay) -- Throttle
-    end
-
-    if Config.AutoTake then
-        pcall(function()
-            local char = LocalPlayer.Character
-            local hrp = char and char:FindFirstChild("HumanoidRootPart")
-            local hum = char and char:FindFirstChild("Humanoid")
-            if hrp and hum then
-                for _, obj in ipairs(Workspace:GetChildren()) do
-                    if obj:IsA("BasePart") and string.find(obj.Name, "Stud", 1, true) then
-                        if (obj.Position - hrp.Position).Magnitude < 30 then
-                            hum:MoveTo(obj.Position)
-                            break
-                        end
-                    end
+-- Cari blok di tanah sesuai warna tim lo
+local function getNearestTeamBlock()
+    local char = LocalPlayer.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp or not LocalPlayer.Team then return nil end
+    
+    local nearest = nil
+    local shortest = 100 -- Jarak maksimal nyari blok
+    
+    for _, obj in ipairs(Workspace:GetChildren()) do
+        if obj:IsA("BasePart") then
+            -- Cek apakah warnanya sama dengan tim, ATAU namanya mengandung nama tim
+            local isTeamBlock = (obj.Color == LocalPlayer.TeamColor.Color) or 
+                                (string.find(string.lower(obj.Name), string.lower(LocalPlayer.Team.Name), 1, true))
+            
+            -- Cek apakah ini blok (namanya ada tulisan "block" atau "stud")
+            local isBlock = string.find(string.lower(obj.Name), "block", 1, true) or 
+                            string.find(string.lower(obj.Name), "stud", 1, true)
+            
+            if isTeamBlock and isBlock then
+                local dist = (obj.Position - hrp.Position).Magnitude
+                if dist < shortest then
+                    shortest = dist
+                    nearest = obj
                 end
             end
-        end)
-        task.wait(0.5)
+        end
+    end
+    return nearest
+end
+
+-- Simulasi klik (Cocok buat CloudEmulator)
+local function doPlace()
+    local tool = getTool()
+    if tool then
+        pcall(function() tool:Activate() end)
+    end
+end
+
+-- Loop Utama
+RunService.Heartbeat:Connect(function()
+    local char = LocalPlayer.Character
+    local hum = char and char:FindFirstChild("Humanoid")
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    
+    if not (char and hum and hrp) then return end
+    hum.WalkSpeed = Config.WalkSpeed
+
+    -- FITUR AUTO SHOOT
+    if Config.AutoShoot then
+        doPlace() -- Di game ini biasanya tool sword/pistol diaktifin pakai klik
+        task.wait(0.2)
     end
 
-    if Config.AutoPath then
-        pcall(function()
-            local char = LocalPlayer.Character
-            local hrp = char and char:FindFirstChild("HumanoidRootPart")
-            local hum = char and char:FindFirstChild("Humanoid")
-            if hrp and hum then
-                -- Jalan maju lurus 50 stud
-                local forward = hrp.CFrame.LookVector * 50
-                hum:MoveTo(hrp.Position + forward)
+    -- FITUR AUTO PLAY (Take -> Walk -> Place)
+    if Config.AutoPlay then
+        local equippedTool = getTool()
+        
+        if equippedTool then
+            -- LOGIKA 1: KALAU UDAH MEGANG BLOK, JALAN LURUS KE DEPAN
+            local forwardPos = hrp.Position + (hrp.CFrame.LookVector * 15)
+            hum:MoveTo(forwardPos)
+            
+            -- Sambil jalan, klik terus buat naruh blok kalau udah mentok ujung
+            doPlace() 
+        else
+            -- LOGIKA 2: KALAU TANGAN KOSONG, CARI BLOK TIM LO
+            local block = getNearestTeamBlock()
+            if block then
+                hum:MoveTo(block.Position)
+                -- Kalau udah deket banget, pasti otomatis ke-ambil sama game-nya
+            else
+                -- Kalau blok ngga keliatan, jalan muter dikit nyari
+                hum:MoveTo(hrp.Position + Vector3.new(math.random(-10,10), 0, math.random(-10,10)))
             end
-        end)
-        task.wait(0.8)
+        end
+        task.wait(0.3)
     end
 end)
 
@@ -95,8 +112,8 @@ ScreenGui.ResetOnSpawn = false
 ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
 
 local MainFrame = Instance.new("Frame")
-MainFrame.Size = UDim2.new(0, 200, 0, 280)
-MainFrame.Position = UDim2.new(0, 20, 0.5, -140)
+MainFrame.Size = UDim2.new(0, 200, 0, 180)
+MainFrame.Position = UDim2.new(0, 20, 0.5, -90)
 MainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
 MainFrame.BorderSizePixel = 0
 MainFrame.Active = true
@@ -108,18 +125,18 @@ Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 8)
 local Title = Instance.new("TextLabel", MainFrame)
 Title.Size = UDim2.new(1, 0, 0, 40)
 Title.BackgroundTransparency = 1
-Title.Text = "Bridge Bot (SAFE V2)"
+Title.Text = "Smart Bridge Bot"
 Title.TextColor3 = Color3.fromRGB(255, 255, 255)
 Title.Font = Enum.Font.GothamBold
 Title.TextSize = 16
 
 local function createToggle(name, key, y)
     local Btn = Instance.new("TextButton", MainFrame)
-    Btn.Size = UDim2.new(0.9, 0, 0, 35)
+    Btn.Size = UDim2.new(0.9, 0, 0, 40)
     Btn.Position = UDim2.new(0.05, 0, 0, y)
     Btn.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
     Btn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    Btn.Font = Enum.Font.Gotham
+    Btn.Font = Enum.Font.GothamBold
     Btn.TextSize = 14
     Btn.Text = name .. " : OFF"
     
@@ -132,19 +149,17 @@ local function createToggle(name, key, y)
     end)
 end
 
-createToggle("Auto Place", "AutoPlace", 50)
-createToggle("Auto Take", "AutoTake", 95)
-createToggle("Auto Path", "AutoPath", 140)
-createToggle("Auto Shoot", "AutoShoot", 185)
+createToggle("Auto Play (Team)", "AutoPlay", 50)
+createToggle("Auto Shoot", "AutoShoot", 100)
 
 local Status = Instance.new("TextLabel", MainFrame)
 Status.Size = UDim2.new(1, 0, 0, 30)
 Status.Position = UDim2.new(0, 0, 1, -30)
 Status.BackgroundTransparency = 1
-Status.Text = "Status: No-Leak Mode"
+Status.Text = "Auto Detects Your Team"
 Status.TextColor3 = Color3.fromRGB(100, 200, 100)
 Status.Font = Enum.Font.Gotham
 Status.TextSize = 12
 
 _G.BridgeBotLoaded = ScreenGui
-print("[BridgeBot] SAFE V2 Loaded. No Force Close.")
+print("[BridgeBot] Smart Team Logic Loaded.")
